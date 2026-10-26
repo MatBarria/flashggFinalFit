@@ -1,4 +1,5 @@
 # Config file: options for signal fitting
+import os
 
 _year = 'combined'
 
@@ -6,7 +7,8 @@ signalScriptCfg = {
   
   # Setup
   # 'inputWSDir':'PATH_TO_INPUTS/workspaces/signal_%s'%_year,
-  'inputWSDir':'/uscms_data/d3/mbarrial/higgsAnalysis/CMSSW_14_0_14/src/HToMuMu/root_io/tuples/split_tuples/VBF/ws_VBF',
+  #'inputWSDir':os.getenv('ROOT_IO') + '/tuples/split_tuples/VBF/ws_VBF',
+  'inputWSDir':'/inputs/ws_signal',
 
   'procs':'auto', # if auto: inferred automatically from filenames
   'cats':'auto', # if auto: inferred automatically from (0) workspace

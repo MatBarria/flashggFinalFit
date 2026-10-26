@@ -29,14 +29,19 @@ cd CombineHarvester && git fetch origin ${COMBINEHARVESTER_TAG} && git checkout 
 
 # Compile libraries
 cd ${CMSSW_BASE}/src
+
+# Clone Final Fit package
+git clone git@github.com:LPC-HH/flashggFinalFit.git
+
 cmsenv
 scram b clean
 scram b -j 8
 
-# Install Final Fit package
-git clone https://github.com/MatBarria/flashggFinalFit.git
 cd flashggFinalFit/
-source setup.sh
+cd Background
+make clean
+make
+cd ..
 ```
 
 ## Contents
@@ -53,3 +58,30 @@ The signal modelling, background modelling and datacard creation can be ran in p
 Finally, the objects and tools which are common to all subfolders are defined in the `tools` directory. If your input workspaces differ from the flashgg output workspace structure, then you may need to change the options here.
 
 Each of the relevant folders are documented with specific `README.md` files. 
+
+## Reminder
+Each time after updating something in `Background`, please `make clean` and `make` to make the change work. Each time after updating DYCore related staff, please go back to `src` to `scram b clean` and `scram b -j 8`.
+
+
+## Workflow
+
+Before running the fits, update the path to the input tuples in `setup.sh`, then initialize the environment:
+```
+source setup.sh
+```
+
+Also, update the number of ggH and VBF categories in `category_config.py`
+
+To run the fits most easily, use the run_fits.sh script, this will run the signal fits, Bkg fits, generate the datacards, and calculte the expected significance 
+```
+bash run_fits.sh -r #removes previous fitting results and plots
+bash run_fits.sh
+
+```
+If you haven't calculate the systematics run 
+
+```
+bash run_fits.sh --nosys
+```
+
+For instructions on running the signal strength likelihood scan, impacts, and bias tests, see Combine/README.md.

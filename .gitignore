@@ -30,10 +30,30 @@ AutoDict_*
 *.png
 *.pdf
 *.out
+*.err
 *.tmp
 *.pcm
 *.o
+*.csv
+*.pkl
 
 # Output dirs in signal and bkg
 Signal/outdir_*
 Background/outdir_*
+Signal/v2p*
+Background/v2p*
+
+# Combine jobs
+Combine/t2w_jobs/*.sh
+Combine/Impacts
+Combine/Likelihood
+
+# Datacard
+Datacard/yields_tutorial/jobs/*.sh
+
+# Compiled binaries
+Background/bin/
+*.so
+*.o
+
+./check_toy.txt 

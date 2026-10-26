@@ -8,7 +8,7 @@ run_datacard() {
     local WS_PATH=$3
 
     echo "---------------------------- $CHANNEL: $CAT ----------------------------"
-
+    echo "$WS_PATH"
     python3 RunYields.py \
         --inputWSDirMap combined="$WS_PATH" \
         --cats "$CAT" \
@@ -70,9 +70,8 @@ run_combined_datacard() {
 }
 
 ### ggH
-GGH_CATS=("ggHcat1" "ggHcat2" "ggHcat3")
-GGH_PATH="/uscms_data/d3/mbarrial/higgsAnalysis/CMSSW_14_0_14/src/HToMuMu/root_io/tuples/split_tuples/ggH/ws_GG2H"
-
+GGH_CATS=("ggHcat1" "ggHcat2" "ggHcat3" "ggHcat4" "ggHcat5" "ggHcat6")
+GGH_PATH="${ROOT_IO}/tuples/split_tuples/ggH/ws_GG2H"
 echo "---------------------------- ggH -----------------------------------"
 for cat in "${GGH_CATS[@]}"; do
     run_datacard $cat "ggH" $GGH_PATH
@@ -88,9 +87,8 @@ done
 rm -f yields_tutorial/*.pkl
 
 ### VBF
-VBF_CATS=("VBFcat1" "VBFcat2" "VBFcat3" "VBFcat4")
-VBF_PATH="/uscms_data/d3/mbarrial/higgsAnalysis/CMSSW_14_0_14/src/HToMuMu/root_io/tuples/split_tuples/VBF/ws_VBF"
-
+VBF_CATS=("VBFcat1" "VBFcat2" "VBFcat3" "VBFcat4" "VBFcat5" "VBFcat6")
+VBF_PATH="${ROOT_IO}/tuples/split_tuples/VBF/ws_VBF"
 echo "---------------------------- VBF -----------------------------------"
 for cat in "${VBF_CATS[@]}"; do
     run_datacard $cat "VBF" $VBF_PATH

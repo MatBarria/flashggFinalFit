@@ -36,6 +36,55 @@ python3 RunText2Workspace.py --mode {model} --batch condor --queue workday
 ```
 The output will be a compiled `RooWorkspace` with the name `Datacard_{model}.root`.
 
+
+## Signal-Strength Likelihood Scan
+
+To run the signal-strength likelihood scan, execute:
+
+```bash
+bash run_likelihood.sh
+```
+
+## Nuisance Parameter Impacts
+
+To calculate the impacts of nuisance parameters on the signal strength, run:
+
+```bash
+bash run_impacts.sh
+```
+
+## Bias Test
+
+To run the discrete profiling bias test, navigate to the bias test directory and execute:
+
+```bash
+cd Checks/Bias_nominal
+bash run_bias_test.sh
+```
+
+This script generates the toy and nominal workspaces, prepares the HTCondor jobs, and submits them.
+
+By default, the bias test runs **2000 toys per generating PDF per category**, with **200 toys per Condor job** (10 jobs per PDF per category).
+
+If systematic uncertainties have not been calculated, run the bias test without systematics:
+
+```bash
+bash run_bias_test.sh --nosys
+```
+
+This disables systematic and MC statistical uncertainties during datacard generation and runs the bias test in statistical-only mode.
+
+### Merging Results and Plotting
+
+Once all jobs have finished, merge the results and generate the bias plots:
+
+```bash
+python3 merge_discrete_bias_results.py
+python3 plot_bias_test.py --median
+```
+
+The `--median` option selects the median of the pull distribution as the bias pull.
+
 ## Running the fits
 
 When you have built the workspace, you are finally ready to run the fits and extract the results! The options for the fit are steered using the input json files:

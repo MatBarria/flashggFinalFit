@@ -20,6 +20,8 @@ BATCH=""
 QUEUE=""
 YEAR="2016"
 CATOFFSET=0
+NBINSPERGEV=4
+FITFORTOY=0
 
 usage(){
 	echo "The script runs background scripts:"
@@ -31,6 +33,7 @@ echo "-p|--procs ) (default= ggh)"
 echo "-f|--flashggCats) (default= UntaggedTag_0,UntaggedTag_1,UntaggedTag_2,UntaggedTag_3,UntaggedTag_4,VBFTag_0,VBFTag_1,VBFTag_2,TTHHadronicTag,TTHLeptonicTag,VHHadronicTag,VHTightTag,VHLooseTag,VHEtTag)"
 echo "--ext)  (default= auto)"
 echo "--catOffset) "
+echo "--nBinsPerGeV) "
 echo "--fTestOnly) "
 echo "--pseudoDataOnly) "
 echo "--pseudoDataDat)"
@@ -50,7 +53,7 @@ echo "--queue) queue to submit jobs to (specific to batch))"
 
 
 # options may be followed by one colon to indicate they have a required argument
-if ! options=$(getopt -u -o hi:p:f: -l help,inputFile:,procs:,flashggCats:,ext:,catOffset:,fTestOnly,pseudoDataOnly,bkgPlotsOnly,pseudoDataDat:,sigFile:,seed:,intLumi:,year:,unblind,isData,batch:,queue: -- "$@")
+if ! options=$(getopt -u -o hi:p:f: -l help,inputFile:,procs:,flashggCats:,ext:,catOffset:,nBinsPerGeV:,fTestOnly,pseudoDataOnly,bkgPlotsOnly,pseudoDataDat:,sigFile:,seed:,intLumi:,year:,unblind,isData,batch:,queue:,fitForToy -- "$@")
 then
 # something went wrong, getopt will put out an error message for us
 exit 1
@@ -66,6 +69,7 @@ case $1 in
 -f|--flashggCats) CATS=$2; shift ;;
 --ext) EXT=$2; echo "test" ; shift ;;
 --catOffset) CATOFFSET=$2; shift ;;
+--nBinsPerGeV) NBINSPERGEV=$2; shift ;;
 --fTestOnly) FTESTONLY=1; echo "ftest" ;;
 --pseudoDataOnly) PSEUDODATAONLY=1;;
 --pseudoDataDat) PSEUDODATADAT=$2; shift;;
@@ -78,6 +82,7 @@ case $1 in
 --unblind) UNBLIND=1;;
 --batch) BATCH=$2; shift;;
 --queue) QUEUE=$2; shift;;
+--fitForToy) FITFORTOY=1;;
 
 (--) shift; break;;
 (-*) usage; echo "$0: error - unrecognized option $1" 1>&2; usage >> /dev/stderr; exit 1;;
@@ -159,8 +164,27 @@ if [ $ISDATA == 1 ]; then
 OPT=" --isData 1"
 fi
 
-echo " ./bin/fTest -i $FILE --saveMultiPdf $OUTDIR/CMS-HGG_multipdf_$EXT_$CATS.root  -D $OUTDIR/bkgfTest$DATAEXT -f $CATS $OPT --year $YEAR --catOffset $CATOFFSET"
-./bin/fTest -i $FILE --saveMultiPdf $OUTDIR/CMS-HGG_multipdf_$EXT_$CATS.root  -D $OUTDIR/bkgfTest$DATAEXT -f $CATS $OPT --year $YEAR --catOffset $CATOFFSET
+# Select nominal or alternative background functions
+TOYOPT=""
+
+if [ "$FITFORTOY" -eq 1 ]; then
+    TOYOPT="--fitForToy"
+fi
+
+echo "[INFO] FITFORTOY = $FITFORTOY"
+
+echo " ./bin/fTest -i $FILE --saveMultiPdf $OUTDIR/CMS-HGG_multipdf_${CATS}.root -D $OUTDIR/bkgfTest$DATAEXT -f $CATS $OPT --year $YEAR --catOffset $CATOFFSET --nBinsPerGeV $NBINSPERGEV $TOYOPT"
+
+./bin/fTest \
+    -i "$FILE" \
+    --saveMultiPdf "$OUTDIR/CMS-HGG_multipdf_${CATS}.root" \
+    -D "$OUTDIR/bkgfTest$DATAEXT" \
+    -f "$CATS" \
+    $OPT \
+    --year "$YEAR" \
+    --catOffset "$CATOFFSET" \
+    --nBinsPerGeV "$NBINSPERGEV" \
+    $TOYOPT
 
 OPT=""
 fi

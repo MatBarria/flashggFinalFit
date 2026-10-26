@@ -1,0 +1,7 @@
+#include "flashggFinalFit/DYCore/interface/RooDYCore.h"
+#include "flashggFinalFit/DYCore/interface/RooDYCoreMod.h"
+#include "flashggFinalFit/DYCore/interface/RooDYSplineCore.h"
+#include "flashggFinalFit/DYCore/interface/RooDYSplineCoreMod.h"
+#include "flashggFinalFit/DYCore/interface/RooDYBernCore.h"
+#include "flashggFinalFit/DYCore/interface/RooDYTexpcore.h"
+#include "flashggFinalFit/DYCore/interface/RooDYTPowcore.h"

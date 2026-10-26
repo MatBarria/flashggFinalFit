@@ -20,9 +20,20 @@ def addConstantSyst(sd,_syst,options):
     sd[_syst['name']] = '-'
     if fromJson:
       sd.loc[(sd['type']=='sig'),_syst['name']] = sd[(sd['type']=='sig')].apply(lambda x: getValueFromJson(x,uval,_syst['name']), axis=1)
-    else:
+    #else:
       # If signal and not NOTAG then set value
-      sd.loc[(sd['type']=='sig')&(~sd['cat'].str.contains("NOTAG")), _syst['name']] = _syst['value']
+      #sd.loc[(sd['type']=='sig')&(~sd['cat'].str.contains("NOTAG")), _syst['name']] = _syst['value']
+    else:
+      mask = (sd['type']=='sig') & (~sd['cat'].str.contains("NOTAG"))
+
+      if 'valueByCatAndProc' in _syst:
+        sd.loc[mask, _syst['name']] = sd[mask].apply(
+          lambda x: getValueByCatAndProc(x, _syst['valueByCatAndProc']), axis=1)
+      elif 'valueByCat' in _syst:
+        sd.loc[mask, _syst['name']] = sd[mask].apply(
+        lambda x: _syst['valueByCat'].get(x['cat'], '-'),axis=1)
+      else:
+        sd.loc[mask, _syst['name']] = _syst['value']
 
   # Partial correlation
   elif _syst['correlateAcrossYears'] == -1:
@@ -40,17 +51,85 @@ def addConstantSyst(sd,_syst,options):
 
   return sd
 
-def getValueFromJson(row,uncertainties,sname):
-  # uncertainties is a dict of the form proc:{sname:X}
-  p = re.sub("_2016_%s"%decayMode,"",row['proc'])
-  p = re.sub("_2017_%s"%decayMode,"",p)
-  p = re.sub("_2018_%s"%decayMode,"",p)
-  p = re.sub("_2022preEE_%s"%decayMode,"",p)
-  p = re.sub("_2022postEE_%s"%decayMode,"",p)
-  if p in uncertainties: 
-    if type(uncertainties[p][sname])==list: return uncertainties[p][sname]
-    else: return [uncertainties[p][sname]]
-  else: return '-'
+
+def getValueByCatAndProc(row, values):
+  """Return a constant nuisance value selected by category and process.
+
+  Process keys are matched as substrings of the datacard process name. For
+  example, `ggH` matches `ggH_2022preEE_hgg`, while `qqH` is the VBF sample.
+  """
+  values_for_cat = values.get(row['cat'], {})
+  for process_pattern, value in values_for_cat.items():
+    if process_pattern in row['proc']:
+      return value
+  return '-'
+
+def _formatSystValue(v):
+  """
+  Datacard writer expects:
+    '-'        for no effect
+    [x]        for symmetric lnN
+    [down, up] for asymmetric lnN
+  """
+  if v == '-':
+    return '-'
+  if type(v) == list:
+    return v
+  return [v]
+
+
+def getValueFromJson(row, uncertainties, sname):
+ # uncertainties is a dict of the form proc:{sname:X}
+  decaymode_hgg = "hgg"
+  p = re.sub("_2016_%s" % decaymode_hgg, "", row["proc"])
+  p = re.sub("_2017_%s" % decaymode_hgg, "", p)
+  p = re.sub("_2018_%s" % decaymode_hgg, "", p)
+  p = re.sub("_2022preee_%s" % decaymode_hgg, "", p)
+  p = re.sub("_2022postee_%s" % decaymode_hgg, "", p)
+  p = re.sub("_combined_%s" % decaymode_hgg, "", p)
+  cat = row['cat']
+
+  # Process not in JSON: no effect.
+  if p not in uncertainties:
+    return '-'
+
+  proc_unc = uncertainties[p]
+
+  # First priority: category-specific value.
+  if "categories" in proc_unc:
+    cat_unc = proc_unc["categories"]
+
+    if cat in cat_unc and sname in cat_unc[cat]:
+      return _formatSystValue(cat_unc[cat][sname])
+
+  # Second priority: global process value.
+  # This is the default used for all categories not specified above.
+  if sname in proc_unc:
+    return _formatSystValue(proc_unc[sname])
+
+  # If no global value exists, then only specified categories receive the nuisance.
+  return '-'
+
+
+
+
+# def getValueFromJson(row, uncertainties, sname):
+    # # uncertainties is a dict of the form proc:{sname:X}
+    # decaymode_hgg = "hgg"
+    # p = re.sub("_2016_%s" % decaymode_hgg, "", row["proc"])
+    # p = re.sub("_2017_%s" % decaymode_hgg, "", p)
+    # p = re.sub("_2018_%s" % decaymode_hgg, "", p)
+    # p = re.sub("_2022preee_%s" % decaymode_hgg, "", p)
+    # p = re.sub("_2022postee_%s" % decaymode_hgg, "", p)
+    # p = re.sub("_combined_%s" % decaymode_hgg, "", p)
+    # if p in uncertainties:
+        # if type(uncertainties[p][sname]) == list:
+            # return uncertainties[p][sname]
+        # else:
+            # return [uncertainties[p][sname]]
+    # else:
+        # return "-"
+
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Function to return type of systematic: to be used by factory functions
@@ -247,10 +326,10 @@ def calcSystYields(_nominalDataName,_nominalDataContents,_inputWS,_systFactoryTy
         systYields["%s_up"%s] = data_hist_up.sumEntries()
         systYields["%s_down"%s] = data_hist_down.sumEntries()
 
-        
+
   # Add variations to dataFrame
   return systYields
-  
+
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # EXPERIMENTAL SYSTEMATICS FACTORY:
@@ -291,7 +370,7 @@ def theorySystFactory(d,systs,ftype,options,stxsMergeScheme=None,_removal=False)
 
   # For process yields: sum central object weight corrected (remove experimental effects)
   corrExt = "_COWCorr" if not options.skipCOWCorr else ''
-   
+
   # Calculate the per-production mode (per-year) yield variation: add as column in dataFrame
   for proc_s0 in d[d['type']=='sig'].proc_s0.unique():
     for year in options.years.split(","):
@@ -351,15 +430,44 @@ def theorySystFactory(d,systs,ftype,options,stxsMergeScheme=None,_removal=False)
   # Loop over systematics and fill entries for rows which satisfy mask
   for s in systs:
     if s['type'] == 'constant': continue
+  
     # Extract factory type
     f = ftype[s['name']]
-    # For ggH theory uncertainties: require proc contains "ggH"
-    if "THU_ggH" in s['name']: mask = (d['type']=='sig')&(d['nominal_yield']!=0)&(d['proc'].str.contains('ggH'))
-    else: mask = (d['type']=='sig')&(d['nominal_yield']!=0)
-    # Loop over tiers and use appropriate mode for compareYield function: skip mnorm as treated separately below
-    for tier in s['tiers']: 
+  
+    # Base mask: signal rows with non-zero yield
+    base_mask = (d['type'] == 'sig') & (d['nominal_yield'] != 0)
+  
+    # Apply only in ggH and VBF categories
+    cat_mask = (
+        d['cat'].str.contains('ggH', case=False, na=False) |
+        d['cat'].str.contains('VBF', case=False, na=False)
+    )
+  
+    # Process masks
+    ggH_proc_mask = d['proc'].str.contains('ggH', case=False, na=False)
+  
+    qqH_proc_mask = (
+        d['proc'].str.contains('qqH', case=False, na=False) |
+        d['proc'].str.contains('VBF', case=False, na=False)
+    )
+  
+    if "THU_ggH" in s['name']:
+      mask = base_mask & cat_mask & ggH_proc_mask
+  
+    elif "THU_qqH" in s['name']:
+      mask = base_mask & cat_mask & qqH_proc_mask
+  
+    else:
+      mask = base_mask
+  
+    # Loop over tiers and use appropriate mode for compareYield function
+    for tier in s['tiers']:
       if tier == 'mnorm': continue
-      d.loc[mask,"%s_%s"%(s['name'],tier)] = d[mask].apply(lambda x: compareYield(x,f,s['name'],mode=tier), axis=1)
+  
+      d.loc[mask, "%s_%s" % (s['name'], tier)] = d[mask].apply(
+          lambda x: compareYield(x, f, s['name'], mode=tier),
+          axis=1
+      )
 
   # For merging STXS bins in parameter scheme: calculate mnorm systematics (merged-STXS-normalisation)
   # One nuisance per merge
@@ -396,7 +504,7 @@ def theorySystFactory(d,systs,ftype,options,stxsMergeScheme=None,_removal=False)
     for id_ in ids_: d.drop(['%snominal_yield'%id_], axis=1, inplace=True)
 
   return d
-  
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Function for extracting systematic factors:
 #   * mode == treatment of theory systematic  
@@ -451,7 +559,7 @@ def compareYield(row,factoryType,sname,mode='default',mname=None):
     else:
       mnorm = (row["proc_%s_yield"%sname]/row["proc_nominal_yield"])/(row["merge_%s_%s_yield"%(mname,sname)]/row["merge_%s_nominal_yield"%mname])
       return [mnorm]
- 
+
   elif mode == 'inorm':
     if factoryType in ["a_w","a_h"]:
       inorm_up = (row["proc_%s_up_yield"%sname]/row["proc_nominal_yield"])
@@ -477,7 +585,7 @@ def compareYield(row,factoryType,sname,mode='default',mname=None):
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Function to group systematics: e.g. for scaleWeight where up/down = [1,2],[3,6] etc
 def groupSystematics(d,systs,options,prefix="scaleWeight",groupings=[],stxsMergeScheme=None,_removal=False):
-  
+
   # Loop over groupings
   for group_idx in range(len(groupings)): 
     gr = groupings[group_idx]
@@ -532,7 +640,7 @@ def groupSystematics(d,systs,options,prefix="scaleWeight",groupings=[],stxsMerge
       elif s['name'] == "%s_%g"%(prefix,gr[1]): systs.remove(s)
 
   return d,systs
-      
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Function to calculate the envelope of systematics with a regexp
 def envelopeSystematics(d,systs,options,regexp=None,stxsMergeScheme=None,_removal=False):
@@ -585,12 +693,12 @@ def envelopeSystematics(d,systs,options,regexp=None,stxsMergeScheme=None,_remova
      # Remove original columns from dataFrame
      if _removal:
        for s in s_regexp: d.drop( ["%s_%s"%(s['name'],tier)], axis=1, inplace=True ) 
- 
+
   # Add envelope to syst dictionary
   systs.append(env)
   if _removal:
     for s in s_regexp: systs.remove(s)
- 
+
   return d, systs
 
 # Function to compare systematic variation for envelope

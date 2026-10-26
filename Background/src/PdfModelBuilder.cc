@@ -1,6 +1,7 @@
 #include "TCanvas.h"
 
 #include "RooPlot.h"
+#include "RooProdPdf.h"
 #include "RooBernstein.h"
 #include "RooChebychev.h"
 #include "RooPolynomial.h"
@@ -8,6 +9,13 @@
 #include "RooExponential.h"
 #include "../interface/RooPowerLaw.h"
 #include "../interface/RooPowerLawSum.h"
+#include "../../DYCore/interface/RooDYCore.h"
+#include "../../DYCore/interface/RooDYCoreMod.h"
+#include "../../DYCore/interface/RooDYSplineCore.h"
+#include "../../DYCore/interface/RooDYSplineCoreMod.h"
+#include "../../DYCore/interface/RooDYBernCore.h"
+#include "../../DYCore/interface/RooDYTexpcore.h"
+#include "../../DYCore/interface/RooDYTPowcore.h"
 #include "RooKeysPdf.h"
 #include "RooAddPdf.h"
 #include "RooDataHist.h"
@@ -17,6 +25,12 @@
 #include "RooConstVar.h"
 #include "RooFitResult.h"
 #include "RooRandom.h"
+#include "RooRealVar.h"
+#include "RooFormulaVar.h"
+#include "TRandom3.h"
+
+#include <algorithm>
+#include <cmath>
 
 #include "boost/algorithm/string/split.hpp"
 #include "boost/algorithm/string/classification.hpp"
@@ -42,9 +56,11 @@ PdfModelBuilder::PdfModelBuilder():
 {
   
   recognisedPdfTypes.push_back("Bernstein");
+  recognisedPdfTypes.push_back("ModBreitWigner");
   recognisedPdfTypes.push_back("Exponential");
   recognisedPdfTypes.push_back("PowerLaw");
   recognisedPdfTypes.push_back("Laurent");
+  recognisedPdfTypes.push_back("DYTheory");
   recognisedPdfTypes.push_back("KeysPdf");
   recognisedPdfTypes.push_back("File");
 
@@ -89,6 +105,573 @@ RooAbsPdf* PdfModelBuilder::getChebychev(string prefix, int order){
   return cheb;
   //bkgPdfs.insert(pair<string,RooAbsPdf*>(bern->GetName(),bern));
 
+}
+
+
+RooAbsPdf* PdfModelBuilder::getModBreitWigner(string prefix) {
+    // fixed parameter Z mass and width
+    RooRealVar* mZ = new RooRealVar(Form("%s_mZ", prefix.c_str()), "Z mass", 91.1876);
+    mZ->setConstant(true);  // fixed
+    
+    RooRealVar* gammaZ = new RooRealVar(Form("%s_gammaZ", prefix.c_str()), "Z width", 2.4952);
+    gammaZ->setConstant(true);  // fixed
+    
+    // floating parameters
+    RooRealVar* alpha1 = new RooRealVar(Form("%s_alpha1", prefix.c_str()), "Shape exponent", 
+                                        2.0,  // ini
+                                        -1.0,  // min
+                                        5.0); // max
+    
+    // floating parameters
+    RooRealVar* alpha2 = new RooRealVar(Form("%s_alpha2", prefix.c_str()), "Linear exponent", 
+                      0.0,   // ini
+                      -0.1,  // min
+                      0.1);  // max
+    
+    // floating parameters
+    RooRealVar* alpha3 = new RooRealVar(Form("%s_alpha3", prefix.c_str()), "Quadratic exponent", 
+                      0.0,     // ini
+                      -0.0020,   // min
+                      0.0020);  // max
+    
+    // store floating
+    params.insert({alpha1->GetName(), alpha1});
+    params.insert({alpha2->GetName(), alpha2});
+    params.insert({alpha3->GetName(), alpha3});
+    
+    // math
+    std::string formula_str = "exp(@3*(@0-125) + @4*(@0-125)*(@0-125)) / "
+                             "(pow(fabs(@0 - @1), @2) + pow(@5/2.0, @2))";
+    
+    //PDF
+    return new RooGenericPdf(prefix.c_str(), "Modified Breit-Wigner",
+                             formula_str.c_str(),
+                             RooArgList(*obs_var, *mZ, *alpha1, *alpha2, *alpha3, *gammaZ));
+}
+
+RooAbsPdf* PdfModelBuilder::getBWZGamma(string prefix)
+{
+
+    // ----------------------------------
+    // fixed Z parameters
+    // ----------------------------------
+
+    RooRealVar* mZ =
+        new RooRealVar(
+            Form("%s_mZ", prefix.c_str()),
+            "Z mass",
+            91.1876
+        );
+    mZ->setConstant(true);
+
+
+    RooRealVar* gammaZ =
+        new RooRealVar(
+            Form("%s_gammaZ", prefix.c_str()),
+            "Z width",
+            2.4952
+        );
+    gammaZ->setConstant(true);
+
+
+
+    // ----------------------------------
+    // exponential slope
+    // exp(a*m)
+    // ----------------------------------
+
+    RooRealVar* a =
+        new RooRealVar(
+            Form("%s_a", prefix.c_str()),
+            "exp slope",
+            0.0,
+            -0.06,
+             0.06
+        );
+
+
+
+    // ----------------------------------
+    // raw fraction parameter
+    //
+    // frac =
+    // 0.5 + atan(fracRaw)/pi
+    //
+    // frac range:
+    // (0,1)
+    //
+    // initial fracRaw=2 gives:
+    // frac ~ 0.85
+    // ----------------------------------
+
+    RooRealVar* fracRaw =
+        new RooRealVar(
+            Form("%s_fracRaw", prefix.c_str()),
+            "raw BW fraction",
+            2.0,
+            -100.0,
+             100.0
+        );
+
+
+    params.insert({a->GetName(), a});
+    params.insert({fracRaw->GetName(), fracRaw});
+
+
+
+    // ----------------------------------
+    // BWZGamma model
+    //
+    // frac * BWZ
+    //
+    // +
+    //
+    // (1-frac) * continuum
+    //
+    // ----------------------------------
+
+    std::string formula =
+
+        // BW fraction
+        "(0.5+atan(@4)/3.141592653589793)*("
+
+            // BWZ
+            "@2*exp(@3*@0)"
+            "/((@0-@1)*(@0-@1)+(@2/2.)*(@2/2.))"
+
+        ")"
+
+        "+"
+
+        // continuum fraction
+        "(0.5-atan(@4)/3.141592653589793)*("
+
+            "exp(@3*@0)/(@0*@0)"
+
+        ")";
+
+
+
+    std::cout
+        << "BWZGamma formula = "
+        << formula
+        << std::endl;
+
+
+
+    return new RooGenericPdf(
+        prefix.c_str(),
+        "BWZGamma",
+        formula.c_str(),
+
+        RooArgList(
+            *obs_var,   // @0 : mass
+            *mZ,        // @1 : Z mass
+            *gammaZ,    // @2 : Z width
+            *a,         // @3 : exp slope
+            *fracRaw    // @4 : raw fraction
+        )
+    );
+}
+
+RooAbsPdf* PdfModelBuilder::get2Exp(string prefix)
+{
+
+    //---------------------------------
+    // normalized observable
+    //---------------------------------
+
+    double xmin = obs_var->getMin();
+    double xmax = obs_var->getMax();
+
+    string xnorm =
+        Form("((2*@0-(%g+%g))/(%g-%g))",
+             xmin,
+             xmax,
+             xmax,
+             xmin);
+
+
+    //---------------------------------
+    // mixing fraction:  F = 1/(1+exp(-theta))
+    //
+    // theta >= 0 keeps F >= 0.5, i.e. the high-order exponential is always
+    // the main component and the linear one only a correction.  This is what
+    // the model is meant to describe.
+    //---------------------------------
+
+    RooRealVar* theta =
+        new RooRealVar(
+            Form("%s_theta",prefix.c_str()),
+            "logistic fraction parameter (F >= 0.5)",
+            1.0,
+            0.0,
+            5.0
+        );
+
+
+    //---------------------------------
+    // high-order (cubic) exponential -- main component
+    //
+    // Its log-slope is written as a *positive* Bernstein polynomial
+    //
+    //   -dP1/dx = p0*(1-t)^2 + 2*p1*t*(1-t) + p2*t^2 ,   t = (1+x)/2
+    //
+    // so for p0,p1,p2 >= 0 this term decreases monotonically over the whole
+    // range.  p0 is the |log-slope| at the low-mass edge (x=-1), p2 the one
+    // at the high-mass edge (x=+1) and p1 the middle of the range.
+    // Integrating the above gives
+    //
+    //   P1(x) = -[ q0*x + (q1/2)*x^2 + (q2/3)*x^3 ]
+    //   q0 = (p0+2p1+p2)/4 , q1 = (p2-p0)/2 , q2 = (p0-2p1+p2)/4
+    //---------------------------------
+
+    RooRealVar* p0 =
+        new RooRealVar(
+            Form("%s_p0",prefix.c_str()),
+            "log-slope at low mass",
+            2.0,
+            0.0,
+            12.0
+        );
+
+    RooRealVar* p1 =
+        new RooRealVar(
+            Form("%s_p1",prefix.c_str()),
+            "log-slope in the middle",
+            1.5,
+            0.0,
+            12.0
+        );
+
+    RooRealVar* p2 =
+        new RooRealVar(
+            Form("%s_p2",prefix.c_str()),
+            "log-slope at high mass",
+            1.0,
+            0.0,
+            12.0
+        );
+
+
+    //---------------------------------
+    // low-order (linear) exponential -- correction only
+    //
+    // a2 <= 0 keeps this term falling as well, so the sum of the two terms
+    // can never develop the "W" shape produced by two mis-aligned
+    // exponentials (which is what happened when a2 was allowed to be > 0).
+    //---------------------------------
+
+    RooRealVar* a2 =
+        new RooRealVar(
+            Form("%s_a2",prefix.c_str()),
+            "linear2 (correction)",
+            -1.0,
+            -5.0,
+            0.0
+        );
+
+
+    //---------------------------------
+    // save parameters
+    //---------------------------------
+
+    params.insert({theta->GetName(),theta});
+
+    params.insert({p0->GetName(),p0});
+    params.insert({p1->GetName(),p1});
+    params.insert({p2->GetName(),p2});
+
+    params.insert({a2->GetName(),a2});
+
+
+    //---------------------------------
+    // logistic fraction
+    //---------------------------------
+
+    string frac =
+        "(1/(1+exp(-@1)))";
+
+
+    //---------------------------------
+    // main (high-order) exponential -- monotone by construction
+    //---------------------------------
+
+    string mainExp =
+        "exp(-(((@2+2*@3+@4)/4)*" + xnorm
+        + "+((@4-@2)/4)*pow(" + xnorm + ",2)"
+        + "+((@2-2*@3+@4)/12)*pow(" + xnorm + ",3)))";
+
+
+    //---------------------------------
+    // small falling correction
+    //---------------------------------
+
+    string corrExp =
+        "exp(@5*" + xnorm + ")";
+
+
+    //---------------------------------
+    // construct formula
+    //---------------------------------
+
+    string formula =
+        frac + "*" + mainExp
+        + "+(1-" + frac + ")*" + corrExp;
+
+
+    //---------------------------------
+    // return pdf
+    //---------------------------------
+
+    return new RooGenericPdf(
+        prefix.c_str(),
+        "TwoExponentials (high-order main term + falling correction)",
+        formula.c_str(),
+        RooArgList(
+            *obs_var,
+            *theta,
+            *p0,
+            *p1,
+            *p2,
+            *a2
+        )
+    );
+
+}
+
+namespace {
+  // small helper: does 'name' end with 'suffix'?
+  bool hasSuffix(const string &name, const string &suffix){
+    return name.size() > suffix.size() &&
+           name.compare(name.size()-suffix.size(), suffix.size(), suffix) == 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Produce a new starting configuration for the sum-of-exponentials pdf.
+//
+// The pdf is monotone by construction (see get2Exp):
+//    f(x) = F*exp(P1(x)) + (1-F)*exp(a2*x)
+// with -dP1/dx a positive Bernstein polynomial (p0,p1,p2 >= 0) and a2 <= 0.
+// Only the scale of the log-slopes and the admixture F have to be varied, so
+// the starting points simply draw those parameters inside their ranges.
+//
+// The random numbers are seeded from the pdf name and 'attempt', so every
+// attempt gives a different (but reproducible) starting point.
+// ---------------------------------------------------------------------------
+bool PdfModelBuilder::set2ExpMonotonicInitValues(RooAbsPdf *pdf, unsigned int attempt)
+{
+  if (!pdf) return false;
+
+  // locate the 2Exp parameters by their names:
+  //   <prefix>_theta, <prefix>_p0, <prefix>_p1, <prefix>_p2, <prefix>_a2
+  RooRealVar *theta = 0;
+  RooRealVar *p0    = 0;
+  RooRealVar *p1    = 0;
+  RooRealVar *p2    = 0;
+  RooRealVar *a2    = 0;
+
+  RooArgSet *vars = pdf->getVariables();
+  TIterator *varIt = vars->createIterator();
+  TObject *obj = 0;
+  while ((obj = varIt->Next())) {
+    RooRealVar *var = dynamic_cast<RooRealVar*>(obj);
+    if (!var) continue;
+    const string name = var->GetName();
+    if      (hasSuffix(name, "_theta")) theta = var;
+    else if (hasSuffix(name, "_p0"))    p0    = var;
+    else if (hasSuffix(name, "_p1"))    p1    = var;
+    else if (hasSuffix(name, "_p2"))    p2    = var;
+    else if (hasSuffix(name, "_a2"))    a2    = var;
+  }
+  delete varIt;
+  delete vars;
+
+  // not a 2Exp pdf -> nothing to do
+  if (!theta || !p0 || !p1 || !p2 || !a2) return false;
+
+  // deterministic seed, different for every (pdf, attempt) pair
+  ULong64_t seed = 1469598103934665603ULL;
+  for (const char *ch = pdf->GetName(); *ch != '\0'; ++ch) {
+    seed *= 1099511628211ULL;
+    seed ^= static_cast<ULong64_t>(static_cast<unsigned char>(*ch));
+  }
+  seed += 0x9E3779B97F4A7C15ULL * (static_cast<ULong64_t>(attempt) + 1ULL);
+
+  TRandom3 rnd(seed);
+
+  // draw a value inside [lo,hi] and clip it to the parameter range
+  auto drawVal = [&](RooRealVar *var, double lo, double hi) {
+    const double v = rnd.Uniform(lo, hi);
+    var->setVal(TMath::Max(var->getMin(), TMath::Min(var->getMax(), v)));
+  };
+
+  // log-slopes: log-uniform so that both shallow and steep shapes are probed
+  auto drawLog = [&](RooRealVar *var, double lo, double hi) {
+    const double v = std::exp(rnd.Uniform(std::log(lo), std::log(hi)));
+    var->setVal(TMath::Max(var->getMin(), TMath::Min(var->getMax(), v)));
+  };
+
+  drawLog(p0, 0.3, 5.0);
+  drawLog(p1, 0.3, 5.0);
+  drawLog(p2, 0.3, 5.0);
+
+  // fraction: always dominated by the high-order term (F >= 0.5)
+  drawVal(theta, 0.0, 3.0);
+
+  // small falling correction
+  drawVal(a2, -3.0, 0.0);
+
+  cout << "[INFO] 2Exp start " << attempt << " for " << pdf->GetName()
+       << " : theta = " << theta->getVal()
+       << ", p0 = "    << p0->getVal()
+       << ", p1 = "    << p1->getVal()
+       << ", p2 = "    << p2->getVal()
+       << ", a2 = "    << a2->getVal() << endl;
+
+  return true;
+}
+
+RooAbsPdf* PdfModelBuilder::get2PowerLaw(string prefix)
+{
+
+    // ------------------------------------
+    // mixture fraction
+    // ------------------------------------
+
+    RooRealVar* frac =
+        new RooRealVar(
+            Form("%s_frac",prefix.c_str()),
+            "fraction",
+            0.95,
+            0.5,
+            1.0
+        );
+
+
+    // ------------------------------------
+    // first power law
+    //
+    // x^-(a1+b1*x+c1*x^2)
+    // ------------------------------------
+
+    RooRealVar* a1 =
+        new RooRealVar(
+            Form("%s_a1",prefix.c_str()),
+            "const1",
+            2.5,
+            0.0,
+            25.0
+        );
+
+
+    RooRealVar* b1 =
+        new RooRealVar(
+            Form("%s_b1",prefix.c_str()),
+            "linear1",
+            0.0,
+            -15.0,
+            15.0
+        );
+
+
+    RooRealVar* c1 =
+        new RooRealVar(
+            Form("%s_c1",prefix.c_str()),
+            "quad1",
+            0.0,
+            -15.0,
+            15.0
+        );
+
+
+    // ------------------------------------
+    // second power law
+    //
+    // x^-a2
+    // ------------------------------------
+
+    RooRealVar* a2 =
+        new RooRealVar(
+            Form("%s_a2",prefix.c_str()),
+            "const2",
+            2.0,
+            0.0,
+            25.0
+        );
+
+
+
+    params.insert({frac->GetName(),frac});
+
+    params.insert({a1->GetName(),a1});
+    params.insert({b1->GetName(),b1});
+    params.insert({c1->GetName(),c1});
+
+    params.insert({a2->GetName(),a2});
+
+
+
+    // ------------------------------------
+    // normalized mass variable
+    //
+    // x = m / 125
+    //
+    // 110 GeV -> 0.88
+    // 125 GeV -> 1.00
+    // 150 GeV -> 1.20
+    //
+    // ------------------------------------
+
+    std::string x =
+        "(@0/125.0)";
+
+
+
+    std::string formula =
+
+        "@1*pow("
+        + x +
+        ",-(@2+@3*"
+        + x +
+        "+@4*"
+        + x +
+        "*"
+        + x +
+        "))"
+
+        "+"
+
+        "(1-@1)*pow("
+        + x +
+        ",-@5)";
+
+
+
+    std::cout
+        << "ThreePowerPlusOne formula = "
+        << formula
+        << std::endl;
+
+
+
+    return new RooGenericPdf(
+        prefix.c_str(),
+        "ThreePowerPlusOne",
+        formula.c_str(),
+
+        RooArgList(
+            *obs_var, // @0
+            *frac,    // @1
+
+            *a1,      // @2
+            *b1,      // @3
+            *c1,      // @4
+
+            *a2       // @5
+        )
+    );
 }
 
 RooAbsPdf* PdfModelBuilder::getBernstein(string prefix, int order){
@@ -294,6 +877,1924 @@ RooAbsPdf* PdfModelBuilder::getLaurentSeries(string prefix, int order){
   //bkgPdfs.insert(pair<string,RooAbsPdf*>(pdf->GetName(),pdf));
 }
 
+/*
+RooAbsPdf* PdfModelBuilder::getDYTheory(string prefix, int empOrder)
+{
+  // --- DY core (already a normalized RooAbsPdf) ---
+  RooAbsPdf* dyCorePdf =
+    new RooDYCore(Form("%s_core", prefix.c_str()),
+                  "DY core",
+                  *obs_var);
+ 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  // --- argument list ---
+  RooArgList args;
+  args.add(*dyCorePdf);  // @0 = DYCore(m)
+  args.add(*obs_var);    // @1 = m
+
+  // --- mhat in [-1,1] ---
+  const double mMin = obs_var->getMin();
+  const double mMax = obs_var->getMax();
+  string mhat =
+    Form("(2*@1-(%g+%g))/(%g-%g)", mMax, mMin, mMax, mMin);
+
+  // --- build empirical correction ---
+  string formula = "@0*exp(";
+
+  for(int i = 1; i <= empOrder; i++){
+    string name = Form("%s_a%d", prefix.c_str(), i);
+
+    RooRealVar* ai =
+      new RooRealVar(name.c_str(), name.c_str(), 0., -1., 1.);
+    params.insert({name, ai});
+    args.add(*ai);   // parameters start from @2
+
+    if(i > 1) formula += "+";
+
+    formula += Form("@%d*cos(%d*acos(%s))",
+                    args.getSize() - 1,
+                    i,
+                    mhat.c_str());
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DY theory empirical",
+    formula.c_str(),
+    args
+  );
+}
+*/
+
+RooAbsPdf* PdfModelBuilder::getDYTheory(string prefix, int empOrder)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYCore(Form("%s_core", prefix.c_str()),
+                  "DY core",
+                  *obs_var);
+
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYBernCore(
+//        Form("%s_core", prefix.c_str()),
+//        "Bernstein core",
+//        *obs_var);
+                  
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // map m -> [-1,1]
+  const double mMin = obs_var->getMin();
+  const double mMax = obs_var->getMax();
+
+  string mhat =
+      Form("(2*@1-(%g+%g))/(%g-%g)",
+           mMax, mMin,
+           mMax, mMin);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=1;i<=empOrder;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -1.0,
+                          1.0);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>1)
+          formula += " + ";
+
+      formula += Form("@%d*cos(%d*acos(%s))",
+                      args.getSize()-1,
+                      i,
+                      mhat.c_str());
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DY theory empirical",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYBernChebychev(string prefix, int empOrder)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYBernCore(
+        Form("%s_core", prefix.c_str()),
+        "Bernstein core",
+        *obs_var);
+                  
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // map m -> [-1,1]
+  const double mMin = obs_var->getMin();
+  const double mMax = obs_var->getMax();
+
+  string mhat =
+      Form("(2*@1-(%g+%g))/(%g-%g)",
+           mMax, mMin,
+           mMax, mMin);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=1;i<=empOrder;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -1.0,
+                          1.0);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>1)
+          formula += " + ";
+
+      formula += Form("@%d*cos(%d*acos(%s))",
+                      args.getSize()-1,
+                      i,
+                      mhat.c_str());
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DY theory empirical",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYExpChebychev(string prefix, int empOrder, string cat)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYTexpcore(
+        Form("%s_core", prefix.c_str()),
+        "exp core",
+        *obs_var, cat);
+                  
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // map m -> [-1,1]
+  const double mMin = obs_var->getMin();
+  const double mMax = obs_var->getMax();
+
+  string mhat =
+      Form("(2*@1-(%g+%g))/(%g-%g)",
+           mMax, mMin,
+           mMax, mMin);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=1;i<=empOrder;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -1.0,
+                          1.0);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>1)
+          formula += " + ";
+
+      formula += Form("@%d*cos(%d*acos(%s))",
+                      args.getSize()-1,
+                      i,
+                      mhat.c_str());
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DY theory empirical",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYPowChebychev(string prefix, int empOrder, string cat)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYTPowcore(
+        Form("%s_core", prefix.c_str()),
+        "pow core",
+        *obs_var, cat);
+                  
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // map m -> [-1,1]
+  const double mMin = obs_var->getMin();
+  const double mMax = obs_var->getMax();
+
+  string mhat =
+      Form("(2*@1-(%g+%g))/(%g-%g)",
+           mMax, mMin,
+           mMax, mMin);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=1;i<=empOrder;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -2.0,
+                          2.0);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>1)
+          formula += " + ";
+
+      formula += Form("@%d*cos(%d*acos(%s))",
+                      args.getSize()-1,
+                      i,
+                      mhat.c_str());
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DY theory empirical",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYFewzChebychev(string prefix, int empOrder)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYBernCore(
+//        Form("%s_core", prefix.c_str()),
+//        "Bernstein core",
+//        *obs_var);
+                  
+    RooAbsPdf* dyCorePdf =
+      new RooDYSplineCore(
+        Form("%s_core", prefix.c_str()),
+        "DY spline core",
+       *obs_var
+      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // map m -> [-1,1]
+  const double mMin = obs_var->getMin();
+  const double mMax = obs_var->getMax();
+
+  string mhat =
+      Form("(2*@1-(%g+%g))/(%g-%g)",
+           mMax, mMin,
+           mMax, mMin);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=1;i<=empOrder;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -1.0,
+                          1.0);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>1)
+          formula += " + ";
+
+      formula += Form("@%d*cos(%d*acos(%s))",
+                      args.getSize()-1,
+                      i,
+                      mhat.c_str());
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DY theory empirical",
+      formula.c_str(),
+      args);
+}
+
+/*
+RooAbsPdf* PdfModelBuilder::getDYBernstein(string prefix, int order)
+{
+  // --- DY core (already a normalized RooAbsPdf) ---
+  RooAbsPdf* dyCorePdf =
+    new RooDYCore(Form("%s_core", prefix.c_str()),
+                  "DY core",
+                  *obs_var);
+ 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+
+  args.add(*dyCorePdf); // @0
+  args.add(*obs_var);   // @1
+
+  string x =
+    Form("(@1 - %g)/(%g - %g)",
+         obs_var->getMin(),
+         obs_var->getMax(),
+         obs_var->getMin());
+
+  // exp(Bernstein)
+  string formula = "@0*exp(";
+
+  for(int i = 0; i < order; i++)
+  {
+    string name = Form("%s_p%d", prefix.c_str(), i);
+
+    RooRealVar* pi =
+      new RooRealVar(name.c_str(),
+                     name.c_str(),
+                     0.0, -0.5, 0.5);
+
+    params.insert({name, pi});
+    args.add(*pi);
+
+    if(i > 0) formula += " + ";
+
+    int binom = TMath::Binomial(order-1, i);
+
+    formula += Form(
+      "%d*@%d*pow(%s,%d)*pow(1-%s,%d)",
+      binom,
+      args.getSize()-1,
+      x.c_str(), i,
+      x.c_str(), order-1-i
+    );
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DYCore * exp(Bernstein)",
+    formula.c_str(),
+    args
+  );
+}
+*/
+
+RooAbsPdf* PdfModelBuilder::getDYBernstein(string prefix, int order)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYCore(Form("%s_core", prefix.c_str()),
+                  "DY core",
+                  *obs_var);
+
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYBernCore(
+//        Form("%s_core", prefix.c_str()),
+//        "Bernstein core",
+//        *obs_var);
+          
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // x in [0,1]
+  string x = Form("(@1-%g)/(%g-%g)",
+                  obs_var->getMin(),
+                  obs_var->getMax(),
+                  obs_var->getMin());
+
+  // strength of correction
+  constexpr double scale = 0.5;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for (int i = 0; i < order; ++i)
+  {
+    string name = Form("%s_p%d", prefix.c_str(), i);
+
+    RooRealVar* pi =
+      new RooRealVar(name.c_str(),
+                     name.c_str(),
+                     0.0,
+                     -2.0,
+                      2.0);
+
+    params.insert({name, pi});
+    args.add(*pi);
+
+    if (i > 0)
+      formula += " + ";
+
+    int binom = TMath::Binomial(order - 1, i);
+
+    formula += Form("%d*@%d*pow(%s,%d)*pow(1-%s,%d)",
+                    binom,
+                    args.getSize()-1,
+                    x.c_str(), i,
+                    x.c_str(), order-1-i);
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYCore * (1 + Bernstein)",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYBernBernstein(string prefix, int order)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYBernCore(
+        Form("%s_core", prefix.c_str()),
+        "Bernstein core",
+        *obs_var);
+          
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // x in [0,1]
+  string x = Form("(@1-%g)/(%g-%g)",
+                  obs_var->getMin(),
+                  obs_var->getMax(),
+                  obs_var->getMin());
+
+  // strength of correction
+  constexpr double scale = 0.5;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for (int i = 0; i < order; ++i)
+  {
+    string name = Form("%s_p%d", prefix.c_str(), i);
+
+    RooRealVar* pi =
+      new RooRealVar(name.c_str(),
+                     name.c_str(),
+                     0.0,
+                     -2.0,
+                      2.0);
+
+    params.insert({name, pi});
+    args.add(*pi);
+
+    if (i > 0)
+      formula += " + ";
+
+    int binom = TMath::Binomial(order - 1, i);
+
+    formula += Form("%d*@%d*pow(%s,%d)*pow(1-%s,%d)",
+                    binom,
+                    args.getSize()-1,
+                    x.c_str(), i,
+                    x.c_str(), order-1-i);
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYCore * (1 + Bernstein)",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYPowerLaw(string prefix, int order)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYCore(Form("%s_core", prefix.c_str()),
+                  "DY core",
+                  *obs_var);
+
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYBernCore(
+//        Form("%s_core", prefix.c_str()),
+//        "Bernstein core",
+//        *obs_var);
+                 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);
+  args.add(*obs_var);
+
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+
+  string mhat =
+    Form("(2*@1-(%g+%g))/(%g-%g)", mMax, mMin, mMax, mMin);
+
+  string formula = "@0*exp(";
+
+  for(int i = 0; i < order; i++)
+  {
+    string name = Form("%s_a%d", prefix.c_str(), i);
+
+    RooRealVar* ai =
+      new RooRealVar(name.c_str(), name.c_str(),
+                     0.0, -0.5, 0.5);
+
+    params.insert({name, ai});
+    args.add(*ai);
+
+    if(i > 0) formula += " + ";
+
+    formula += Form("@%d*pow(%s,%d)",
+                    args.getSize()-1,
+                    mhat.c_str(),
+                    i+1);
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DYCore * exp powerlaw correction",
+    formula.c_str(),
+    args
+  );
+}
+
+RooAbsPdf* PdfModelBuilder::getDYBernPowerLaw(string prefix, int order)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYBernCore(
+        Form("%s_core", prefix.c_str()),
+        "Bernstein core",
+        *obs_var);
+                 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);
+  args.add(*obs_var);
+
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+
+  string mhat =
+    Form("(2*@1-(%g+%g))/(%g-%g)", mMax, mMin, mMax, mMin);
+
+  string formula = "@0*exp(";
+
+  for(int i = 0; i < order; i++)
+  {
+    string name = Form("%s_a%d", prefix.c_str(), i);
+
+    RooRealVar* ai =
+      new RooRealVar(name.c_str(), name.c_str(),
+                     0.0, -0.5, 0.5);
+
+    params.insert({name, ai});
+    args.add(*ai);
+
+    if(i > 0) formula += " + ";
+
+    formula += Form("@%d*pow(%s,%d)",
+                    args.getSize()-1,
+                    mhat.c_str(),
+                    i+1);
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DYCore * exp powerlaw correction",
+    formula.c_str(),
+    args
+  );
+}
+
+RooAbsPdf* PdfModelBuilder::getDYExpPowerLaw(string prefix, int order, string cat)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYTexpcore(
+        Form("%s_core", prefix.c_str()),
+        "exp core",
+        *obs_var, cat);
+                 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);
+  args.add(*obs_var);
+
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+
+  string mhat =
+    Form("(2*@1-(%g+%g))/(%g-%g)", mMax, mMin, mMax, mMin);
+
+  string formula = "@0*exp(";
+
+  for(int i = 0; i < order; i++)
+  {
+    string name = Form("%s_a%d", prefix.c_str(), i);
+
+    RooRealVar* ai =
+      new RooRealVar(name.c_str(), name.c_str(),
+                     0.0, -0.5, 0.5);
+
+    params.insert({name, ai});
+    args.add(*ai);
+
+    if(i > 0) formula += " + ";
+
+    formula += Form("@%d*pow(%s,%d)",
+                    args.getSize()-1,
+                    mhat.c_str(),
+                    i+1);
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DYCore * exp powerlaw correction",
+    formula.c_str(),
+    args
+  );
+}
+
+RooAbsPdf* PdfModelBuilder::getDYPowPowerLaw(string prefix, int order, string cat)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYTPowcore(
+        Form("%s_core", prefix.c_str()),
+        "pow core",
+        *obs_var, cat);
+                 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);
+  args.add(*obs_var);
+
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+
+  string mhat =
+    Form("(2*@1-(%g+%g))/(%g-%g)", mMax, mMin, mMax, mMin);
+
+  string formula = "@0*exp(";
+
+  for(int i = 0; i < order; i++)
+  {
+    string name = Form("%s_a%d", prefix.c_str(), i);
+
+    RooRealVar* ai =
+      new RooRealVar(name.c_str(), name.c_str(),
+                     0.0, -1.0, 1.0);
+
+    params.insert({name, ai});
+    args.add(*ai);
+
+    if(i > 0) formula += " + ";
+
+    formula += Form("@%d*pow(%s,%d)",
+                    args.getSize()-1,
+                    mhat.c_str(),
+                    i+1);
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DYCore * exp powerlaw correction",
+    formula.c_str(),
+    args
+  );
+}
+
+RooAbsPdf* PdfModelBuilder::getDYFewzPowerLaw(string prefix, int order)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYBernCore(
+//        Form("%s_core", prefix.c_str()),
+//        "Bernstein core",
+//        *obs_var);
+                 
+    RooAbsPdf* dyCorePdf =
+      new RooDYSplineCore(
+        Form("%s_core", prefix.c_str()),
+        "DY spline core",
+       *obs_var
+      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);
+  args.add(*obs_var);
+
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+
+  string mhat =
+    Form("(2*@1-(%g+%g))/(%g-%g)", mMax, mMin, mMax, mMin);
+
+  string formula = "@0*exp(";
+
+  for(int i = 0; i < order; i++)
+  {
+    string name = Form("%s_a%d", prefix.c_str(), i);
+
+    RooRealVar* ai =
+      new RooRealVar(name.c_str(), name.c_str(),
+                     0.0, -0.5, 0.5);
+
+    params.insert({name, ai});
+    args.add(*ai);
+
+    if(i > 0) formula += " + ";
+
+    formula += Form("@%d*pow(%s,%d)",
+                    args.getSize()-1,
+                    mhat.c_str(),
+                    i+1);
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DYCore * exp powerlaw correction",
+    formula.c_str(),
+    args
+  );
+}
+
+/*
+RooAbsPdf* PdfModelBuilder::getDYLaurent(string prefix, int order)
+{
+  // --- DY core (already a normalized RooAbsPdf) ---
+  RooAbsPdf* dyCorePdf =
+    new RooDYCore(Form("%s_core", prefix.c_str()),
+                  "DY core",
+                  *obs_var);
+ 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf); // @0
+  args.add(*obs_var);   // @1 = m
+
+  // --- mass range ---
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+
+  // expansion center
+  double mCenter = 0.5 * (mMin + mMax);
+
+  // centered inverse variable
+  string y =
+    Form("(1./@1 - 1./%g)", mCenter);
+
+  // --- build formula ---
+  string formula = "@0*exp(";
+
+  for(int i = 0; i < order; i++)
+  {
+    string name = Form("%s_a%d", prefix.c_str(), i);
+
+    // tighter range helps a lot
+    RooRealVar* ai =
+      new RooRealVar(name.c_str(),
+                     name.c_str(),
+                     0.0,
+                     -0.1,
+                      0.1);
+
+    params.insert({name, ai});
+    args.add(*ai);
+
+    if(i > 0) formula += " + ";
+
+    formula += Form("@%d*pow(%s,%d)",
+                    args.getSize()-1,
+                    y.c_str(),
+                    i+1);
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DYCore * centered Laurent correction",
+    formula.c_str(),
+    args
+  );
+}
+*/
+
+RooAbsPdf* PdfModelBuilder::getDYLaurent(string prefix, int order)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYCore(Form("%s_core", prefix.c_str()),
+                  "DY core",
+                  *obs_var);
+
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYBernCore(
+//        Form("%s_core", prefix.c_str()),
+//        "Bernstein core",
+//        *obs_var);
+                 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // -------------------------------
+  // normalized inverse-mass variable
+  // -------------------------------
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+  double mCenter = 0.5*(mMin+mMax);
+
+  double ymax = std::max(
+      fabs(1./mMin - 1./mCenter),
+      fabs(1./mMax - 1./mCenter));
+
+  string y =
+      Form("((1./@1-1./%g)/%g)",
+           mCenter,
+           ymax);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=0;i<order;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -0.70,
+                          0.70);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>0)
+          formula += " + ";
+
+      formula += Form("@%d*pow(%s,%d)",
+                      args.getSize()-1,
+                      y.c_str(),
+                      i+1);
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYCore * Laurent correction",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYBernLaurent(string prefix, int order)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYBernCore(
+        Form("%s_core", prefix.c_str()),
+        "Bernstein core",
+        *obs_var);
+                 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // -------------------------------
+  // normalized inverse-mass variable
+  // -------------------------------
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+  double mCenter = 0.5*(mMin+mMax);
+
+  double ymax = std::max(
+      fabs(1./mMin - 1./mCenter),
+      fabs(1./mMax - 1./mCenter));
+
+  string y =
+      Form("((1./@1-1./%g)/%g)",
+           mCenter,
+           ymax);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=0;i<order;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -0.70,
+                          0.70);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>0)
+          formula += " + ";
+
+      formula += Form("@%d*pow(%s,%d)",
+                      args.getSize()-1,
+                      y.c_str(),
+                      i+1);
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYCore * Laurent correction",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYExpLaurent(string prefix, int order, string cat)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYTexpcore(
+        Form("%s_core", prefix.c_str()),
+        "exp core",
+        *obs_var, cat);
+                 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // -------------------------------
+  // normalized inverse-mass variable
+  // -------------------------------
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+  double mCenter = 0.5*(mMin+mMax);
+
+  double ymax = std::max(
+      fabs(1./mMin - 1./mCenter),
+      fabs(1./mMax - 1./mCenter));
+
+  string y =
+      Form("((1./@1-1./%g)/%g)",
+           mCenter,
+           ymax);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=0;i<order;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -0.70,
+                          0.70);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>0)
+          formula += " + ";
+
+      formula += Form("@%d*pow(%s,%d)",
+                      args.getSize()-1,
+                      y.c_str(),
+                      i+1);
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYCore * Laurent correction",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYPowLaurent(string prefix, int order, string cat)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+  RooAbsPdf* dyCorePdf =
+    new RooDYTPowcore(
+        Form("%s_core", prefix.c_str()),
+        "pow core",
+        *obs_var, cat);
+                 
+//    RooAbsPdf* dyCorePdf =
+//      new RooDYSplineCore(
+//        Form("%s_core", prefix.c_str()),
+//        "DY spline core",
+//       *obs_var
+//      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // -------------------------------
+  // normalized inverse-mass variable
+  // -------------------------------
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+  double mCenter = 0.5*(mMin+mMax);
+
+  double ymax = std::max(
+      fabs(1./mMin - 1./mCenter),
+      fabs(1./mMax - 1./mCenter));
+
+  string y =
+      Form("((1./@1-1./%g)/%g)",
+           mCenter,
+           ymax);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=0;i<order;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -1.0,
+                          1.0);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>0)
+          formula += " + ";
+
+      formula += Form("@%d*pow(%s,%d)",
+                      args.getSize()-1,
+                      y.c_str(),
+                      i+1);
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYCore * Laurent correction",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYFewzLaurent(string prefix, int order)
+{
+  // -------------------------------
+  // DY core
+  // -------------------------------
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYCore(Form("%s_core", prefix.c_str()),
+//                  "DY core",
+//                  *obs_var);
+
+//  RooAbsPdf* dyCorePdf =
+//    new RooDYBernCore(
+//        Form("%s_core", prefix.c_str()),
+//        "Bernstein core",
+//        *obs_var);
+                 
+    RooAbsPdf* dyCorePdf =
+      new RooDYSplineCore(
+        Form("%s_core", prefix.c_str()),
+        "DY spline core",
+       *obs_var
+      );
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // -------------------------------
+  // normalized inverse-mass variable
+  // -------------------------------
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+  double mCenter = 0.5*(mMin+mMax);
+
+  double ymax = std::max(
+      fabs(1./mMin - 1./mCenter),
+      fabs(1./mMax - 1./mCenter));
+
+  string y =
+      Form("((1./@1-1./%g)/%g)",
+           mCenter,
+           ymax);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=0;i<order;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -0.70,
+                          0.70);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>0)
+          formula += " + ";
+
+      formula += Form("@%d*pow(%s,%d)",
+                      args.getSize()-1,
+                      y.c_str(),
+                      i+1);
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYCore * Laurent correction",
+      formula.c_str(),
+      args);
+}
+
+// ============================================================
+// MC corrected DY cores
+//
+// These use RooDYCoreMod / RooDYSplineCoreMod: the fixed DY shape
+// multiplied by a per-category third order Chebyshev correction
+// whose coefficients were fitted on the MC (see
+// Background/test/fitDYshapes.cpp and the CSVs in
+// Background/DYshapes).
+//
+// On top of that corrected core the usual floating empirical
+// correction (Chebyshev / power law / Laurent) is applied, in
+// exactly the same way as for the getDY* / getDYFewz* families.
+// ============================================================
+
+RooAbsPdf* PdfModelBuilder::getDYModChebychev(string prefix, int empOrder, string cat)
+{
+  // -------------------------------
+  // DY core (MC corrected)
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYCoreMod(
+        Form("%s_core", prefix.c_str()),
+        "DY core (MC corrected)",
+        *obs_var, cat);
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // map m -> [-1,1]
+  const double mMin = obs_var->getMin();
+  const double mMax = obs_var->getMax();
+
+  string mhat =
+      Form("(2*@1-(%g+%g))/(%g-%g)",
+           mMax, mMin,
+           mMax, mMin);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=1;i<=empOrder;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -1.0,
+                          1.0);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>1)
+          formula += " + ";
+
+      formula += Form("@%d*cos(%d*acos(%s))",
+                      args.getSize()-1,
+                      i,
+                      mhat.c_str());
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYCoreMod * Chebyshev correction",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYModPowerLaw(string prefix, int order, string cat)
+{
+  // -------------------------------
+  // DY core (MC corrected)
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYCoreMod(
+        Form("%s_core", prefix.c_str()),
+        "DY core (MC corrected)",
+        *obs_var, cat);
+
+  RooArgList args;
+  args.add(*dyCorePdf);
+  args.add(*obs_var);
+
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+
+  string mhat =
+    Form("(2*@1-(%g+%g))/(%g-%g)", mMax, mMin, mMax, mMin);
+
+  string formula = "@0*exp(";
+
+  for(int i = 0; i < order; i++)
+  {
+    string name = Form("%s_a%d", prefix.c_str(), i);
+
+    RooRealVar* ai =
+      new RooRealVar(name.c_str(), name.c_str(),
+                     0.0, -0.5, 0.5);
+
+    params.insert({name, ai});
+    args.add(*ai);
+
+    if(i > 0) formula += " + ";
+
+    formula += Form("@%d*pow(%s,%d)",
+                    args.getSize()-1,
+                    mhat.c_str(),
+                    i+1);
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DYCoreMod * exp powerlaw correction",
+    formula.c_str(),
+    args
+  );
+}
+
+RooAbsPdf* PdfModelBuilder::getDYModLaurent(string prefix, int order, string cat)
+{
+  // -------------------------------
+  // DY core (MC corrected)
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYCoreMod(
+        Form("%s_core", prefix.c_str()),
+        "DY core (MC corrected)",
+        *obs_var, cat);
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // -------------------------------
+  // normalized inverse-mass variable
+  // -------------------------------
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+  double mCenter = 0.5*(mMin+mMax);
+
+  double ymax = std::max(
+      fabs(1./mMin - 1./mCenter),
+      fabs(1./mMax - 1./mCenter));
+
+  string y =
+      Form("((1./@1-1./%g)/%g)",
+           mCenter,
+           ymax);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=0;i<order;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -0.70,
+                          0.70);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>0)
+          formula += " + ";
+
+      formula += Form("@%d*pow(%s,%d)",
+                      args.getSize()-1,
+                      y.c_str(),
+                      i+1);
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYCoreMod * Laurent correction",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYFewzModChebychev(string prefix, int empOrder, string cat)
+{
+  // -------------------------------
+  // DY spline core (MC corrected)
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYSplineCoreMod(
+        Form("%s_core", prefix.c_str()),
+        "DY spline core (MC corrected)",
+        *obs_var, cat);
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // map m -> [-1,1]
+  const double mMin = obs_var->getMin();
+  const double mMax = obs_var->getMax();
+
+  string mhat =
+      Form("(2*@1-(%g+%g))/(%g-%g)",
+           mMax, mMin,
+           mMax, mMin);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=1;i<=empOrder;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -1.0,
+                          1.0);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>1)
+          formula += " + ";
+
+      formula += Form("@%d*cos(%d*acos(%s))",
+                      args.getSize()-1,
+                      i,
+                      mhat.c_str());
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYSplineCoreMod * Chebyshev correction",
+      formula.c_str(),
+      args);
+}
+
+RooAbsPdf* PdfModelBuilder::getDYFewzModPowerLaw(string prefix, int order, string cat)
+{
+  // -------------------------------
+  // DY spline core (MC corrected)
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYSplineCoreMod(
+        Form("%s_core", prefix.c_str()),
+        "DY spline core (MC corrected)",
+        *obs_var, cat);
+
+  RooArgList args;
+  args.add(*dyCorePdf);
+  args.add(*obs_var);
+
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+
+  string mhat =
+    Form("(2*@1-(%g+%g))/(%g-%g)", mMax, mMin, mMax, mMin);
+
+  string formula = "@0*exp(";
+
+  for(int i = 0; i < order; i++)
+  {
+    string name = Form("%s_a%d", prefix.c_str(), i);
+
+    RooRealVar* ai =
+      new RooRealVar(name.c_str(), name.c_str(),
+                     0.0, -0.5, 0.5);
+
+    params.insert({name, ai});
+    args.add(*ai);
+
+    if(i > 0) formula += " + ";
+
+    formula += Form("@%d*pow(%s,%d)",
+                    args.getSize()-1,
+                    mhat.c_str(),
+                    i+1);
+  }
+
+  formula += ")";
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    "DYSplineCoreMod * exp powerlaw correction",
+    formula.c_str(),
+    args
+  );
+}
+
+RooAbsPdf* PdfModelBuilder::getDYFewzModLaurent(string prefix, int order, string cat)
+{
+  // -------------------------------
+  // DY spline core (MC corrected)
+  // -------------------------------
+  RooAbsPdf* dyCorePdf =
+    new RooDYSplineCoreMod(
+        Form("%s_core", prefix.c_str()),
+        "DY spline core (MC corrected)",
+        *obs_var, cat);
+
+  RooArgList args;
+  args.add(*dyCorePdf);   // @0
+  args.add(*obs_var);     // @1
+
+  // -------------------------------
+  // normalized inverse-mass variable
+  // -------------------------------
+  double mMin = obs_var->getMin();
+  double mMax = obs_var->getMax();
+  double mCenter = 0.5*(mMin+mMax);
+
+  double ymax = std::max(
+      fabs(1./mMin - 1./mCenter),
+      fabs(1./mMax - 1./mCenter));
+
+  string y =
+      Form("((1./@1-1./%g)/%g)",
+           mCenter,
+           ymax);
+
+  constexpr double scale = 0.50;
+
+  string formula = Form("@0*(1+%.3f*(", scale);
+
+  for(int i=0;i<order;i++)
+  {
+      string name = Form("%s_a%d", prefix.c_str(), i);
+
+      RooRealVar* ai =
+          new RooRealVar(name.c_str(),
+                         name.c_str(),
+                         0.0,
+                         -0.70,
+                          0.70);
+
+      params.insert({name, ai});
+      args.add(*ai);
+
+      if(i>0)
+          formula += " + ";
+
+      formula += Form("@%d*pow(%s,%d)",
+                      args.getSize()-1,
+                      y.c_str(),
+                      i+1);
+  }
+
+  formula += "))";
+
+  return new RooGenericPdf(
+      prefix.c_str(),
+      "DYSplineCoreMod * Laurent correction",
+      formula.c_str(),
+      args);
+}
+
+
+RooAbsPdf* PdfModelBuilder::getBWZExpPoly(string prefix, int order)
+{
+  RooArgList args;
+
+  // observable
+  args.add(*obs_var); // @0
+
+  // ---------------------------------
+  // fixed Z parameters
+  // ---------------------------------
+
+  RooRealVar* mZ =
+    new RooRealVar(
+      Form("%s_mZ",prefix.c_str()),
+      "Z mass",
+      91.1876
+    );
+  mZ->setConstant(true);
+
+  RooRealVar* gammaZ =
+    new RooRealVar(
+      Form("%s_gammaZ",prefix.c_str()),
+      "Z width",
+      2.4952
+    );
+  gammaZ->setConstant(true);
+
+  args.add(*mZ);      // @1
+  args.add(*gammaZ);  // @2
+
+  // ---------------------------------
+  // scaled variable
+  //
+  // x=(m-125)/25
+  // ---------------------------------
+
+  std::string x = "((@0-125.0)/25.0)";
+
+  std::string formula;
+
+  // ---------------------------------
+  // order = 0:
+  // pure BWZ, no exponential term
+  // ---------------------------------
+
+  if(order == 0)
+  {
+    formula =
+      "(@2/"
+      "((@0-@1)*(@0-@1)+pow(@2/2.,2)))";
+  }
+
+  // ---------------------------------
+  // order >= 1:
+  // BWZ * exponential polynomial
+  // ---------------------------------
+
+  else
+  {
+    formula = "(@2*exp(";
+
+    // ---------------------------------
+    // exponential polynomial
+    // ---------------------------------
+
+    for(int i=0; i<order; i++)
+    {
+      std::string name =
+        Form("%s_p%d",prefix.c_str(),i);
+
+      RooRealVar* p =
+        new RooRealVar(
+          name.c_str(),
+          name.c_str(),
+          0.0,
+          -5.0,
+           5.0
+        );
+
+      params.insert({name,p});
+
+      args.add(*p);
+
+      int idx = args.getSize()-1;
+
+      if(i>0)
+        formula += " + ";
+
+      if(i==0)
+      {
+        formula += Form(
+          "@%d*(%s)",
+          idx,
+          x.c_str()
+        );
+      }
+      else
+      {
+        formula += Form(
+          "@%d*pow(%s,%d)",
+          idx,
+          x.c_str(),
+          i+1
+        );
+      }
+    }
+
+    formula += ")";
+
+    // ---------------------------------
+    // BWZ denominator
+    // ---------------------------------
+
+    formula +=
+      "/((@0-@1)*(@0-@1)"
+      "+pow(@2/2.,2)))";
+  }
+
+  std::cout
+    << "BWZExpPoly formula = "
+    << formula
+    << std::endl;
+
+  return new RooGenericPdf(
+    prefix.c_str(),
+    prefix.c_str(),
+    formula.c_str(),
+    args
+  );
+}
+
 RooAbsPdf* PdfModelBuilder::getKeysPdf(string prefix){
   if (!keysPdfAttributesSet){
     cerr << "ERROR -- keysPdf attributes not set" << endl;
@@ -384,10 +2885,25 @@ void PdfModelBuilder::addBkgPdf(string type, int nParams, string name, bool cach
   }
   RooAbsPdf *pdf=0;// avoid uninitialised variable error in cmssw  
 
+//  if (type=="Bernstein") pdf = getBernstein(name,nParams);
+//  if (type=="Exponential") pdf = getExponentialSingle(name,nParams);
+  if (type == "ModBreitWigner") {
+    pdf = getModBreitWigner(name);
+  }
+//  if (type=="PowerLaw") pdf = getPowerLawSingle(name,nParams);
+  if (type=="Laurent") pdf = getLaurentSeries(name,nParams);
   if (type=="Bernstein") pdf = getBernstein(name,nParams);
   if (type=="Exponential") pdf = getExponentialSingle(name,nParams);
   if (type=="PowerLaw") pdf = getPowerLawSingle(name,nParams);
-  if (type=="Laurent") pdf = getLaurentSeries(name,nParams);
+  if (type=="DYTheory") pdf = getDYTheory(name,nParams);
+  if (type=="DYTheory_cheb") pdf = getDYTheory(name,nParams);
+  if (type=="DYTheory_pow") pdf = getDYPowerLaw(name,nParams);
+  if (type=="DYTheory_lau") pdf = getDYLaurent(name,nParams);
+  if (type=="DYTheory_bern") pdf = getDYBernstein(name,nParams);
+  if (type=="BWZ_exp") pdf = getBWZExpPoly(name,nParams);
+  if (type=="BWZ_gamma") pdf = getBWZGamma(name);
+  if (type=="2PowerLaw") pdf = get2PowerLaw(name);
+  if (type=="2Exp") pdf = get2Exp(name);
   if (type=="KeysPdf") pdf = getKeysPdf(name);
   if (type=="File") pdf = getPdfFromFile(name);
 

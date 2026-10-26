@@ -1,0 +1,9 @@
+<lcgdict>
+  <class name="RooDYCore"/>
+  <class name="RooDYCoreMod"/>
+  <class name="RooDYSplineCore"/>
+  <class name="RooDYSplineCoreMod"/>
+  <class name="RooDYBernCore"/>
+  <class name="RooDYTexpcore"/>
+  <class name="RooDYTPowcore"/>
+</lcgdict>

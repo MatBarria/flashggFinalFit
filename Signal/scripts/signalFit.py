@@ -52,7 +52,7 @@ def get_options():
   parser.add_option("--scalesGlobal", dest='scalesGlobal', default='', help='Photon shape systematics: scalesGlobal')
   parser.add_option("--smears", dest='smears', default='', help='Photon shape systematics: smears')
   # Parameter values
-  parser.add_option('--replacementThreshold', dest='replacementThreshold', default=100, type='int', help="Nevent threshold to trigger replacement dataset")
+  parser.add_option('--replacementThreshold', dest='replacementThreshold', default=10, type='int', help="Nevent threshold to trigger replacement dataset")
   parser.add_option('--beamspotWidthData', dest='beamspotWidthData', default=3.5, type='float', help="Width of beamspot in data [cm]")
   parser.add_option('--beamspotWidthMC', dest='beamspotWidthMC', default=3.7, type='float', help="Width of beamspot in MC [cm]")
   parser.add_option('--MHPolyOrder', dest='MHPolyOrder', default=1, type='int', help="Order of polynomial for MH dependence")

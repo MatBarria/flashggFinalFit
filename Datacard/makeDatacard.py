@@ -49,6 +49,7 @@ pkl_files = glob.glob("./yields%s/*.pkl"%extStr)
 pkl_files.sort() # Categories in alphabetical order
 data = pd.DataFrame()
 for f_pkl_name in pkl_files:
+  print(f_pkl_name)
   with open(f_pkl_name,"rb") as f_pkl: 
     df = pickle.load(f_pkl)
     data = pd.concat([data,df], ignore_index=True, axis=0, sort=False)
@@ -109,7 +110,7 @@ if opt.prune:
     from tools.XSBR import *
     XSBR = extractXSBR(data,mass=opt.mass,analysis=opt.analysis)
     data.loc[mask,'xsbr'] = data[mask].apply(lambda x: XSBR["XS_%s"%x['procOriginal']]*XSBR['BR'], axis=1)
-
+    #data.loc[mask,'xsbr'] = data[mask].apply(lambda x: XSBR["XS_%s"%x['procOriginal']]*1, axis=1)
     # Extract eff*acc using total proc yield: strictly should include NOTAG
     data['ea'] = '-'
     # In HiggsDNA the sumw = eff*acc
@@ -117,8 +118,8 @@ if opt.prune:
 
     # Calculate true yield
     data.loc[mask,'true_yield'] = data[mask].apply(lambda x: x['xsbr']*x['ea']*x['rate'], axis=1)
-
-    # Extract per category tue yields
+    print("true yield data", data)
+    # Extract per category true yields
     catTrueYields = od()
     for cat in data.cat.unique(): catTrueYields[cat] = data[(data['cat']==cat)&(data['type']=='sig')].true_yield.sum()
 
@@ -174,6 +175,10 @@ if opt.doSystematics:
       leave()
   writeBreak(fdata)
   for syst in signal_shape_systematics:
+    current_cats = list(data['cat'].unique())
+    if 'cats' in syst:
+      if not any(cat in current_cats for cat in syst['cats']):
+        continue
     if not writeSystematic(fdata,data,syst,opt):
       print(" --> [ERROR] in writing systematic %s (signal shape). Leaving"%syst['name'])
       leave()

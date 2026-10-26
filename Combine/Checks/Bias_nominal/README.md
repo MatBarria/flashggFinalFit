@@ -38,12 +38,18 @@ The three steps can be run in one go, but it's probably safer to run them one-by
 Here is an example:
 
 ```
-./RunBiasStudy.py -d Datacard_mu_ggH_cat0.root -t 
-./RunBiasStudy.py -d Datacard_mu_ggH_cat0.root -f -c "--cminDefaultMinimizerStrategy 0 --X-rtd MINIMIZER_freezeDisassociatedParams --X-rtd MINIMIZER_multiMin_hideConstants --X-rtd MINIMIZER_multiMin_maskConstraints --X-rtd MINIMIZER_multiMin_maskChannels=2 --freezeParameters MH" 
-./RunBiasStudy.py -d Datacard_mu_ggH_cat0.root -p --gaussianFit
+python3 RunBiasStudy.py -d Datacard_mu_ggH_cat0.root -t -b ${cat}
+python3 RunBiasStudy.py -d Datacard_mu_ggH_cat0.root -b ${cat} -f -c "--setParameterRanges r=-5,5 --cminDefaultMinimizerStrategy 0 --X-rtd MINIMIZER_freezeDisassociatedParams --X-rtd MINIMIZER_multiMin_hideConstants --X-rtd MINIMIZER_multiMin_maskConstraints" 
+python3 RunBiasStudy.py -d Datacard_mu_ggH_cat0.root -b ${cat} -p --gaussianFit
 ```
 The options for the second step are passed to combine; these are recommended to get the fit to converge. 
 The additional option on the plotting is fairly self-explanatory; it adds a gaussian fit to the output plot.
+
+Intead of running step-by-step, you can run the entire bias test at once with the run_Bias_nominal.sh script. For this script to run properly, the datacards by category need to have already been created in  ../../Datacard_tutorial_${cat}_mu_inclusive.root. In the bash script, the categories are looped over which may also need to be adjusted if the categorization has changed.
+
+```
+bash run_Bias_nominal.sh
+```
 
 ## More options
 
@@ -55,3 +61,24 @@ Here is a list of the common options:
  * `--poi`: if your parameter of interest is called something other than `r`, say so here.
  * `--split`: default number of toys to be thrown or fits to be performed in one go. Set to 500 but may need to be lowered for memory reasons if you have a more complicated fit. 
  * `--selectFunction`: you can specify a string here to only select certain functions for these studies (e.g. `bern` to match all Bernstein polynomials, `exp1` to match just the first-order exponential).
+
+## Plotting
+After the bias study is run, to generate the bias study plots, run
+```
+python3 plotBiasResults.py -c <outputCSVname>.csv
+```
+
+## Running condor jobs
+In order to get the condor jobs working, you need to tar the CMSSW environment to send in the input files for the condor job. This needs to be redone anytime there is a change
+```
+cd $CMSSW_BASE/..
+tar -czf CMSSW_14_1_0_pre4.tgz --exclude='*.pdf' --exclude='*.png' --exclude='*.csv' --exclude='*.out' --exclude='*.log' --exclude='*.err' --exclude='*/.git/*' CMSSW_14_1_0_pre4
+```
+Once the directory has been succesfully compressed, check the size with ls -alh (should be less than 500 MB)
+Next, cd back to this directory, and make any needed changes to run_nominal_by_cat.sh.
+Now run
+```
+python3 create_bias_jobs.py
+bash condor_bias_job_sender.sh
+```
+All of the output files should be then in the condor/ directory and can be analyzed for plotting with the plotBiasResults.py script

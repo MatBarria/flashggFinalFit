@@ -63,6 +63,7 @@ def initialiseXSBR():
   while( mh < 130.05 ):
     for pm in productionModes: xsbr[pm].append(getXS(SM,MHVar,mh,pm))
     xsbr[decayMode].append(getBR(SM,MHVar,mh,decayMode))
+    #xsbr[decayMode].append(1)
     xsbr['constant'].append(1.)
     mh += 0.1
   for pm in productionModes: xsbr[pm] = np.asarray(xsbr[pm])
@@ -111,6 +112,36 @@ class FinalModel:
     self.NuisanceMap = od()
     self.Pdfs = od()
     self.Datasets = od()
+
+    ##  For the moment I just want to add the extrar parameter to the ggH sample 
+    ## in the ggH categories
+    self.addHmmShapeParams = (
+        self.proc.startswith("GG2H")
+        and re.match(r"^ggHcat[1-5]$", self.cat)
+    )
+
+    self.hmmPeakParam = None
+    self.hmmSigmaParam = None
+
+    if self.addHmmShapeParams:
+        self.hmmPeakParam = ROOT.RooRealVar(
+            "CMS_hmm_peak_ggH_%s" % self.cat,
+            "CMS_hmm_peak_ggH_%s" % self.cat,
+            0.0,
+            -1.0,
+            1.0
+        )
+
+        self.hmmSigmaParam = ROOT.RooRealVar(
+            "CMS_hmm_sigma_ggH_%s" % self.cat,
+            "CMS_hmm_sigma_ggH_%s" % self.cat,
+            0.0,
+            -1.0,
+            1.0
+        )
+
+
+
     # Build XS/BR/EA splines
     self.XSBR = initialiseXSBR() 
     self.buildXSBRSplines()
@@ -362,6 +393,12 @@ class FinalModel:
               dependents.add(sInfo['meanConst'])
               dependents.add(sInfo['param'])
       formula += ")"
+
+    # mean -> mean * (1 + Nuisance param#)
+    # if self.addHmmShapeParams:
+      # formula += "*(1+@%g)" % dependents.getSize()
+      # dependents.add(self.hmmPeakParam)
+
     self.Functions[meanName] = ROOT.RooFormulaVar(meanName,meanName,formula,dependents)
 
   def buildSigma(self,sigmaSplineName="",skipSystematics=False):
@@ -382,6 +419,10 @@ class FinalModel:
               dependents.add(sInfo['sigmaConst'])
               dependents.add(sInfo['param'])
       formula += "))"
+    if self.addHmmShapeParams:
+      formula += "*TMath::Max(1.e-2,(1+@%g))" % dependents.getSize()
+      dependents.add(self.hmmSigmaParam)
+    
     self.Functions[sigmaName] = ROOT.RooFormulaVar(sigmaName,sigmaName,formula,dependents)
 
   def buildRate(self,rateName,skipSystematics=False):

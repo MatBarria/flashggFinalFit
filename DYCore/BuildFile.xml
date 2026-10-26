@@ -1,0 +1,6 @@
+<use name="root"/> 
+<use name="roofit"/> 
+<use name="rootdict"/> 
+<export> 
+  <lib name="1"/> 
+</export>
